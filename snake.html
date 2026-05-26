@@ -1,0 +1,884 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Змейка (Snake Game)</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            font-family: 'Courier New', monospace;
+            overflow: hidden;
+        }
+
+        .game-container {
+            position: relative;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 0 30px rgba(0, 255, 100, 0.3);
+        }
+
+        #gameCanvas {
+            display: block;
+            background: #2d5016;
+        }
+
+        .ui-panel {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            right: 10px;
+            display: flex;
+            justify-content: space-between;
+            padding: 10px 15px;
+            background: rgba(0, 0, 0, 0.7);
+            border-radius: 8px;
+            color: #fff;
+            font-size: 18px;
+            font-weight: bold;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.8);
+            pointer-events: none;
+        }
+
+        .ui-item {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .ui-label {
+            font-size: 12px;
+            color: #aaa;
+            margin-bottom: 2px;
+        }
+
+        .ui-value {
+            font-size: 24px;
+            color: #4ade80;
+        }
+
+        .overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            background: rgba(0, 0, 0, 0.85);
+            color: #fff;
+            text-align: center;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s ease;
+        }
+
+        .overlay.active {
+            opacity: 1;
+            pointer-events: all;
+        }
+
+        .overlay h1 {
+            font-size: 48px;
+            margin-bottom: 20px;
+            color: #4ade80;
+            text-shadow: 0 0 20px rgba(74, 222, 128, 0.5);
+        }
+
+        .overlay p {
+            font-size: 24px;
+            margin: 10px 0;
+        }
+
+        .overlay .score-display {
+            font-size: 32px;
+            color: #fbbf24;
+            margin: 20px 0;
+        }
+
+        .overlay .record-display {
+            font-size: 20px;
+            color: #9ca3af;
+            margin-bottom: 30px;
+        }
+
+        .overlay .hint {
+            font-size: 16px;
+            color: #6b7280;
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 0.5; }
+            50% { opacity: 1; }
+        }
+
+        .pause-overlay {
+            background: rgba(0, 0, 0, 0.7);
+        }
+
+        .pause-overlay h2 {
+            font-size: 36px;
+            color: #fbbf24;
+        }
+    </style>
+</head>
+<body>
+    <div class="game-container">
+        <canvas id="gameCanvas"></canvas>
+        
+        <div class="ui-panel">
+            <div class="ui-item">
+                <span class="ui-label">СЧЁТ</span>
+                <span class="ui-value" id="scoreValue">0</span>
+            </div>
+            <div class="ui-item">
+                <span class="ui-label">РЕКОРД</span>
+                <span class="ui-value" id="recordValue">0</span>
+            </div>
+            <div class="ui-item">
+                <span class="ui-label">СКОРОСТЬ</span>
+                <span class="ui-value" id="speedValue">1x</span>
+            </div>
+        </div>
+
+        <div class="overlay active" id="startOverlay">
+            <h1>🐍 ЗМЕЙКА</h1>
+            <p class="hint">Нажми любую клавишу для старта</p>
+        </div>
+
+        <div class="overlay pause-overlay" id="pauseOverlay">
+            <h2>⏸️ ПАУЗА</h2>
+            <p class="hint">Нажми P для продолжения</p>
+        </div>
+
+        <div class="overlay" id="gameOverOverlay">
+            <h1>💀 GAME OVER</h1>
+            <div class="score-display">Счёт: <span id="finalScore">0</span></div>
+            <div class="record-display">Рекорд: <span id="finalRecord">0</span></div>
+            <p class="hint">Нажми любую клавишу для рестарта</p>
+        </div>
+    </div>
+
+    <script>
+        // ============================================
+        // КОНСТАНТЫ И НАСТРОЙКИ
+        // ============================================
+        const GRID_SIZE = 20;
+        const CELL_SIZE = 32;
+        const CANVAS_WIDTH = GRID_SIZE * CELL_SIZE;
+        const CANVAS_HEIGHT = GRID_SIZE * CELL_SIZE + 60; // + отступ для UI
+        const UI_HEIGHT = 60;
+        
+        const COLORS = {
+            grassLight: '#3d6b1c',
+            grassDark: '#2d5016',
+            snakeHead: '#4ade80',
+            snakeBody: '#22c55e',
+            snakeTail: '#16a34a',
+            apple: '#ef4444',
+            appleHighlight: '#fca5a5',
+            appleLeaf: '#84cc16',
+            eye: '#000000',
+            tongue: '#dc2626'
+        };
+
+        // ============================================
+        // ГЕНЕРАТОР ТЕКСТУР
+        // ============================================
+        class TextureGenerator {
+            constructor() {
+                this.cache = new Map();
+            }
+
+            getTexture(name, generator) {
+                if (!this.cache.has(name)) {
+                    this.cache.set(name, generator());
+                }
+                return this.cache.get(name);
+            }
+
+            createGrassTile() {
+                const canvas = document.createElement('canvas');
+                canvas.width = CELL_SIZE;
+                canvas.height = CELL_SIZE;
+                const ctx = canvas.getContext('2d');
+
+                // Базовый цвет
+                ctx.fillStyle = Math.random() > 0.5 ? COLORS.grassLight : COLORS.grassDark;
+                ctx.fillRect(0, 0, CELL_SIZE, CELL_SIZE);
+
+                // Добавляем вариации (шум)
+                for (let i = 0; i < 15; i++) {
+                    const x = Math.random() * CELL_SIZE;
+                    const y = Math.random() * CELL_SIZE;
+                    const size = Math.random() * 3 + 1;
+                    ctx.fillStyle = `rgba(${Math.random() > 0.5 ? '100, 200, 50' : '60, 150, 30'}, ${Math.random() * 0.3 + 0.1})`;
+                    ctx.beginPath();
+                    ctx.arc(x, y, size, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // Травинки
+                for (let i = 0; i < 8; i++) {
+                    const x = Math.random() * CELL_SIZE;
+                    const y = CELL_SIZE - Math.random() * 5;
+                    const height = Math.random() * 8 + 4;
+                    ctx.strokeStyle = `rgba(100, 220, 50, ${Math.random() * 0.4 + 0.2})`;
+                    ctx.lineWidth = 1;
+                    ctx.beginPath();
+                    ctx.moveTo(x, y);
+                    ctx.quadraticCurveTo(x + Math.random() * 4 - 2, y - height / 2, x + Math.random() * 6 - 3, y - height);
+                    ctx.stroke();
+                }
+
+                return canvas;
+            }
+
+            createGrassBackground() {
+                const canvas = document.createElement('canvas');
+                canvas.width = CANVAS_WIDTH;
+                canvas.height = CANVAS_HEIGHT - UI_HEIGHT;
+                const ctx = canvas.getContext('2d');
+
+                const tileCanvas = this.getTexture('grassTile', () => this.createGrassTile());
+
+                for (let x = 0; x < GRID_SIZE; x++) {
+                    for (let y = 0; y < GRID_SIZE; y++) {
+                        ctx.drawImage(tileCanvas, x * CELL_SIZE, y * CELL_SIZE);
+                    }
+                }
+
+                return canvas;
+            }
+
+            createSnakeHead(direction) {
+                const canvas = document.createElement('canvas');
+                canvas.width = CELL_SIZE;
+                canvas.height = CELL_SIZE;
+                const ctx = canvas.getContext('2d');
+
+                ctx.save();
+                
+                // Поворот в зависимости от направления
+                let rotation = 0;
+                if (direction === 'right') rotation = 0;
+                else if (direction === 'down') rotation = Math.PI / 2;
+                else if (direction === 'left') rotation = Math.PI;
+                else if (direction === 'up') rotation = -Math.PI / 2;
+
+                ctx.translate(CELL_SIZE / 2, CELL_SIZE / 2);
+                ctx.rotate(rotation);
+                ctx.translate(-CELL_SIZE / 2, -CELL_SIZE / 2);
+
+                // Основная форма головы (скруглённая)
+                ctx.fillStyle = COLORS.snakeHead;
+                ctx.beginPath();
+                ctx.roundRect(2, 2, CELL_SIZE - 4, CELL_SIZE - 4, 8);
+                ctx.fill();
+
+                // Чешуйчатый узор
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
+                for (let i = 0; i < 3; i++) {
+                    for (let j = 0; j < 3; j++) {
+                        const x = 6 + i * 8;
+                        const y = 6 + j * 8;
+                        ctx.beginPath();
+                        ctx.moveTo(x, y);
+                        ctx.lineTo(x + 4, y - 2);
+                        ctx.lineTo(x + 8, y);
+                        ctx.lineTo(x + 4, y + 2);
+                        ctx.closePath();
+                        ctx.fill();
+                    }
+                }
+
+                // Глаза
+                ctx.fillStyle = '#fff';
+                ctx.beginPath();
+                ctx.arc(10, 10, 5, 0, Math.PI * 2);
+                ctx.arc(22, 10, 5, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.fillStyle = COLORS.eye;
+                ctx.beginPath();
+                ctx.arc(11, 10, 2.5, 0, Math.PI * 2);
+                ctx.arc(23, 10, 2.5, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Язычок
+                ctx.strokeStyle = COLORS.tongue;
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(CELL_SIZE / 2, 4);
+                ctx.lineTo(CELL_SIZE / 2, -6);
+                ctx.lineTo(CELL_SIZE / 2 - 4, -10);
+                ctx.moveTo(CELL_SIZE / 2, -6);
+                ctx.lineTo(CELL_SIZE / 2 + 4, -10);
+                ctx.stroke();
+
+                ctx.restore();
+                return canvas;
+            }
+
+            createSnakeBody() {
+                const canvas = document.createElement('canvas');
+                canvas.width = CELL_SIZE;
+                canvas.height = CELL_SIZE;
+                const ctx = canvas.getContext('2d');
+
+                // Основная форма
+                ctx.fillStyle = COLORS.snakeBody;
+                ctx.beginPath();
+                ctx.roundRect(3, 3, CELL_SIZE - 6, CELL_SIZE - 6, 6);
+                ctx.fill();
+
+                // Чешуйчатый узор
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
+                ctx.beginPath();
+                ctx.arc(CELL_SIZE / 2, CELL_SIZE / 2, 8, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.1)';
+                ctx.beginPath();
+                ctx.arc(CELL_SIZE / 2, CELL_SIZE / 2, 5, 0, Math.PI * 2);
+                ctx.fill();
+
+                return canvas;
+            }
+
+            createSnakeTail() {
+                const canvas = document.createElement('canvas');
+                canvas.width = CELL_SIZE;
+                canvas.height = CELL_SIZE;
+                const ctx = canvas.getContext('2d');
+
+                // Зауженная форма хвоста
+                ctx.fillStyle = COLORS.snakeTail;
+                ctx.beginPath();
+                ctx.moveTo(CELL_SIZE / 2, 2);
+                ctx.lineTo(CELL_SIZE - 4, CELL_SIZE - 4);
+                ctx.lineTo(CELL_SIZE / 2, CELL_SIZE - 2);
+                ctx.lineTo(4, CELL_SIZE - 4);
+                ctx.closePath();
+                ctx.fill();
+
+                // Узор
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
+                ctx.beginPath();
+                ctx.moveTo(CELL_SIZE / 2, 8);
+                ctx.lineTo(CELL_SIZE - 8, CELL_SIZE - 8);
+                ctx.lineTo(CELL_SIZE / 2, CELL_SIZE - 6);
+                ctx.lineTo(8, CELL_SIZE - 8);
+                ctx.closePath();
+                ctx.fill();
+
+                return canvas;
+            }
+
+            createApple() {
+                const canvas = document.createElement('canvas');
+                canvas.width = CELL_SIZE;
+                canvas.height = CELL_SIZE;
+                const ctx = canvas.getContext('2d');
+
+                const centerX = CELL_SIZE / 2;
+                const centerY = CELL_SIZE / 2 + 2;
+                const radius = 10;
+
+                // Тень
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+                ctx.beginPath();
+                ctx.ellipse(centerX, CELL_SIZE - 6, radius * 0.8, radius * 0.3, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Основное яблоко
+                const gradient = ctx.createRadialGradient(
+                    centerX - 3, centerY - 3, 2,
+                    centerX, centerY, radius
+                );
+                gradient.addColorStop(0, COLORS.appleHighlight);
+                gradient.addColorStop(0.3, COLORS.apple);
+                gradient.addColorStop(1, '#b91c1c');
+
+                ctx.fillStyle = gradient;
+                ctx.beginPath();
+                ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Блик
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+                ctx.beginPath();
+                ctx.ellipse(centerX - 4, centerY - 4, 3, 2, Math.PI / 4, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Черенок
+                ctx.strokeStyle = '#8B4513';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(centerX, centerY - radius);
+                ctx.quadraticCurveTo(centerX + 2, centerY - radius - 5, centerX + 3, centerY - radius - 8);
+                ctx.stroke();
+
+                // Листочек
+                ctx.fillStyle = COLORS.appleLeaf;
+                ctx.beginPath();
+                ctx.ellipse(centerX + 6, centerY - radius - 4, 5, 3, Math.PI / 6, 0, Math.PI * 2);
+                ctx.fill();
+
+                return canvas;
+            }
+        }
+
+        // ============================================
+        // СИСТЕМА ЧАСТИЦ
+        // ============================================
+        class ParticleSystem {
+            constructor() {
+                this.particles = [];
+            }
+
+            emit(x, y, count = 10) {
+                for (let i = 0; i < count; i++) {
+                    this.particles.push({
+                        x: x,
+                        y: y,
+                        vx: (Math.random() - 0.5) * 8,
+                        vy: (Math.random() - 0.5) * 8,
+                        life: 1,
+                        decay: Math.random() * 0.05 + 0.05,
+                        color: `hsl(${Math.random() * 60 + 40}, 100%, 50%)`,
+                        size: Math.random() * 4 + 2
+                    });
+                }
+            }
+
+            update() {
+                this.particles = this.particles.filter(p => {
+                    p.x += p.vx;
+                    p.y += p.vy;
+                    p.vy += 0.2; // гравитация
+                    p.life -= p.decay;
+                    return p.life > 0;
+                });
+            }
+
+            draw(ctx) {
+                this.particles.forEach(p => {
+                    ctx.globalAlpha = p.life;
+                    ctx.fillStyle = p.color;
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
+                    ctx.fill();
+                });
+                ctx.globalAlpha = 1;
+            }
+        }
+
+        // ============================================
+        // КЛАСС ЗМЕИ
+        // ============================================
+        class Snake {
+            constructor() {
+                this.reset();
+            }
+
+            reset() {
+                const startX = Math.floor(GRID_SIZE / 2);
+                const startY = Math.floor(GRID_SIZE / 2);
+                this.segments = [
+                    { x: startX, y: startY },
+                    { x: startX - 1, y: startY },
+                    { x: startX - 2, y: startY }
+                ];
+                this.direction = 'right';
+                this.nextDirection = 'right';
+                this.growPending = false;
+            }
+
+            setDirection(dir) {
+                const opposites = {
+                    'up': 'down',
+                    'down': 'up',
+                    'left': 'right',
+                    'right': 'left'
+                };
+                
+                if (opposites[dir] !== this.direction) {
+                    this.nextDirection = dir;
+                }
+            }
+
+            move() {
+                this.direction = this.nextDirection;
+                
+                const head = this.segments[0];
+                let newX = head.x;
+                let newY = head.y;
+
+                switch (this.direction) {
+                    case 'up': newY--; break;
+                    case 'down': newY++; break;
+                    case 'left': newX--; break;
+                    case 'right': newX++; break;
+                }
+
+                this.segments.unshift({ x: newX, y: newY });
+
+                if (!this.growPending) {
+                    this.segments.pop();
+                } else {
+                    this.growPending = false;
+                }
+            }
+
+            grow() {
+                this.growPending = true;
+            }
+
+            checkCollision() {
+                const head = this.segments[0];
+
+                // Столкновение со стенами
+                if (head.x < 0 || head.x >= GRID_SIZE || head.y < 0 || head.y >= GRID_SIZE) {
+                    return true;
+                }
+
+                // Столкновение с собой
+                for (let i = 1; i < this.segments.length; i++) {
+                    if (head.x === this.segments[i].x && head.y === this.segments[i].y) {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+
+            getHeadPosition() {
+                return this.segments[0];
+            }
+
+            occupiesPosition(x, y) {
+                return this.segments.some(seg => seg.x === x && seg.y === y);
+            }
+        }
+
+        // ============================================
+        // КЛАСС ЯБЛОКА
+        // ============================================
+        class Apple {
+            constructor(snake) {
+                this.snake = snake;
+                this.position = { x: 0, y: 0 };
+                this.spawn();
+            }
+
+            spawn() {
+                let valid = false;
+                while (!valid) {
+                    this.position = {
+                        x: Math.floor(Math.random() * GRID_SIZE),
+                        y: Math.floor(Math.random() * GRID_SIZE)
+                    };
+                    valid = !this.snake.occupiesPosition(this.position.x, this.position.y);
+                }
+            }
+
+            getPosition() {
+                return this.position;
+            }
+        }
+
+        // ============================================
+        // ОСНОВНОЙ КЛАСС ИГРЫ
+        // ============================================
+        class Game {
+            constructor() {
+                this.canvas = document.getElementById('gameCanvas');
+                this.ctx = this.canvas.getContext('2d');
+                this.canvas.width = CANVAS_WIDTH;
+                this.canvas.height = CANVAS_HEIGHT;
+
+                this.textureGenerator = new TextureGenerator();
+                this.particleSystem = new ParticleSystem();
+                this.snake = new Snake();
+                this.apple = null;
+
+                this.score = 0;
+                this.record = this.loadRecord();
+                this.speed = 1;
+                this.baseSpeed = 150; // мс между движениями
+                this.applesEaten = 0;
+
+                this.state = 'start'; // start, playing, paused, gameover
+                this.lastMoveTime = 0;
+                this.deathFlash = 0;
+
+                this.initTextures();
+                this.setupEventListeners();
+                this.updateUI();
+
+                this.gameLoop = this.gameLoop.bind(this);
+                requestAnimationFrame(this.gameLoop);
+            }
+
+            initTextures() {
+                this.textures = {
+                    grass: this.textureGenerator.createGrassBackground(),
+                    apple: this.textureGenerator.createApple(),
+                    body: this.textureGenerator.createSnakeBody(),
+                    tail: this.textureGenerator.createSnakeTail()
+                };
+            }
+
+            getHeadTexture(direction) {
+                return this.textureGenerator.createSnakeHead(direction);
+            }
+
+            setupEventListeners() {
+                document.addEventListener('keydown', (e) => {
+                    if (this.state === 'start') {
+                        this.startGame();
+                        return;
+                    }
+
+                    if (this.state === 'gameover') {
+                        this.startGame();
+                        return;
+                    }
+
+                    if (e.key === 'p' || e.key === 'P' || e.key === 'п' || e.key === 'П') {
+                        this.togglePause();
+                        return;
+                    }
+
+                    if (this.state !== 'playing') return;
+
+                    switch (e.key) {
+                        case 'ArrowUp':
+                        case 'w':
+                        case 'W':
+                        case 'ц':
+                        case 'Ц':
+                            this.snake.setDirection('up');
+                            break;
+                        case 'ArrowDown':
+                        case 's':
+                        case 'S':
+                        case 'ы':
+                        case 'Ы':
+                            this.snake.setDirection('down');
+                            break;
+                        case 'ArrowLeft':
+                        case 'a':
+                        case 'A':
+                        case 'ф':
+                        case 'Ф':
+                            this.snake.setDirection('left');
+                            break;
+                        case 'ArrowRight':
+                        case 'd':
+                        case 'D':
+                        case 'в':
+                        case 'В':
+                            this.snake.setDirection('right');
+                            break;
+                        case 'Escape':
+                            this.togglePause();
+                            break;
+                    }
+                });
+            }
+
+            startGame() {
+                this.snake.reset();
+                this.apple = new Apple(this.snake);
+                this.score = 0;
+                this.speed = 1;
+                this.applesEaten = 0;
+                this.state = 'playing';
+                this.deathFlash = 0;
+
+                this.hideOverlay('startOverlay');
+                this.hideOverlay('gameOverOverlay');
+                this.hideOverlay('pauseOverlay');
+                this.updateUI();
+            }
+
+            togglePause() {
+                if (this.state === 'playing') {
+                    this.state = 'paused';
+                    this.showOverlay('pauseOverlay');
+                } else if (this.state === 'paused') {
+                    this.state = 'playing';
+                    this.hideOverlay('pauseOverlay');
+                }
+            }
+
+            gameOver() {
+                this.state = 'gameover';
+                this.deathFlash = 1;
+
+                if (this.score > this.record) {
+                    this.record = this.score;
+                    this.saveRecord();
+                }
+
+                document.getElementById('finalScore').textContent = this.score;
+                document.getElementById('finalRecord').textContent = this.record;
+                this.showOverlay('gameOverOverlay');
+                this.updateUI();
+            }
+
+            loadRecord() {
+                const saved = localStorage.getItem('snakeRecord');
+                return saved ? parseInt(saved) : 0;
+            }
+
+            saveRecord() {
+                localStorage.setItem('snakeRecord', this.record.toString());
+            }
+
+            updateUI() {
+                document.getElementById('scoreValue').textContent = this.score;
+                document.getElementById('recordValue').textContent = this.record;
+                document.getElementById('speedValue').textContent = this.speed.toFixed(1) + 'x';
+            }
+
+            showOverlay(id) {
+                document.getElementById(id).classList.add('active');
+            }
+
+            hideOverlay(id) {
+                document.getElementById(id).classList.remove('active');
+            }
+
+            update(currentTime) {
+                if (this.state !== 'playing') return;
+
+                const moveInterval = this.baseSpeed / this.speed;
+
+                if (currentTime - this.lastMoveTime > moveInterval) {
+                    this.snake.move();
+
+                    if (this.snake.checkCollision()) {
+                        this.gameOver();
+                        return;
+                    }
+
+                    const head = this.snake.getHeadPosition();
+                    const applePos = this.apple.getPosition();
+
+                    if (head.x === applePos.x && head.y === applePos.y) {
+                        this.snake.grow();
+                        this.score += 10;
+                        this.applesEaten++;
+
+                        // Увеличение скорости каждые 5 яблок
+                        if (this.applesEaten % 5 === 0) {
+                            this.speed *= 1.1;
+                        }
+
+                        // Эффект частиц
+                        const pixelX = applePos.x * CELL_SIZE + CELL_SIZE / 2;
+                        const pixelY = applePos.y * CELL_SIZE + CELL_SIZE / 2;
+                        this.particleSystem.emit(pixelX, pixelY, 15);
+
+                        this.apple.spawn();
+                        this.updateUI();
+                    }
+
+                    this.lastMoveTime = currentTime;
+                }
+
+                this.particleSystem.update();
+
+                if (this.deathFlash > 0) {
+                    this.deathFlash -= 0.05;
+                }
+            }
+
+            draw() {
+                // Очистка
+                this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+
+                // Фон (трава)
+                this.ctx.drawImage(this.textures.grass, 0, UI_HEIGHT);
+
+                // Яблоко
+                const applePos = this.apple.getPosition();
+                this.ctx.drawImage(
+                    this.textures.apple,
+                    applePos.x * CELL_SIZE,
+                    applePos.y * CELL_SIZE + UI_HEIGHT
+                );
+
+                // Змея
+                this.snake.segments.forEach((segment, index) => {
+                    let texture;
+                    if (index === 0) {
+                        texture = this.getHeadTexture(this.snake.direction);
+                    } else if (index === this.snake.segments.length - 1) {
+                        texture = this.textures.tail;
+                    } else {
+                        texture = this.textures.body;
+                    }
+
+                    this.ctx.drawImage(
+                        texture,
+                        segment.x * CELL_SIZE,
+                        segment.y * CELL_SIZE + UI_HEIGHT
+                    );
+                });
+
+                // Частицы
+                this.particleSystem.draw(this.ctx);
+
+                // Смертельная вспышка
+                if (this.deathFlash > 0) {
+                    this.ctx.save();
+                    this.ctx.fillStyle = `rgba(255, 0, 0, ${this.deathFlash * 0.5})`;
+                    this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+                    
+                    // Красная обводка вокруг головы
+                    const head = this.snake.getHeadPosition();
+                    this.ctx.strokeStyle = `rgba(255, 0, 0, ${this.deathFlash})`;
+                    this.ctx.lineWidth = 4;
+                    this.ctx.strokeRect(
+                        head.x * CELL_SIZE + 2,
+                        head.y * CELL_SIZE + UI_HEIGHT + 2,
+                        CELL_SIZE - 4,
+                        CELL_SIZE - 4
+                    );
+                    this.ctx.restore();
+                }
+            }
+
+            gameLoop(currentTime) {
+                this.update(currentTime);
+                this.draw();
+                requestAnimationFrame(this.gameLoop);
+            }
+        }
+
+        // ============================================
+        // ЗАПУСК ИГРЫ
+        // ============================================
+        window.addEventListener('load', () => {
+            new Game();
+        });
+    </script>
+</body>
+</html>
